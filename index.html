@@ -1759,7 +1759,7 @@ input[type=range]::-moz-range-thumb {
       (for local testing: http://localhost:PORT/your-file.html or
        if serving from a file: the exact file:// or http:// URL)
    ================================================================ */
-const SPOTIFY_CLIENT_ID = '7367512db3ee4540bdb84d11ebfa88b2';  // ← Replace with your Spotify Client ID
+const SPOTIFY_CLIENT_ID = 'YOUR_CLIENT_ID_HERE';  // ← Replace with your Spotify Client ID
 const REDIRECT_URI      = window.location.href.split('?')[0].split('#')[0]; // auto-detects current page URL
 
 // Scopes required for full playback + library access
@@ -2550,7 +2550,7 @@ async function runSearch(query, type) {
   showLoader();
   try {
     const typeParam = type === 'track' ? 'track' : type === 'playlist' ? 'playlist' : type === 'artist' ? 'artist' : 'album';
-    const res = await spotifyFetch(`/search?q=${encodeURIComponent(query)}&type=${typeParam}&limit=20&market=from_token`);
+    const res = await spotifyFetch(`/search?q=${encodeURIComponent(query)}&type=${typeParam}&limit=20`);
     let html = '';
 
     if (type === 'track') {
@@ -2656,12 +2656,17 @@ function bindLibraryEvents() {
     });
   });
 
-  // Grid items (playlists, albums, artists)
+  // Grid items (playlists, albums, artists) — open track list on click
   $$('.grid-item').forEach(el => {
     el.addEventListener('click', () => {
       const uri  = el.dataset.uri;
       const type = el.dataset.type;
-      playUri(uri, type);
+      const name = el.querySelector('.grid-name')?.textContent || '';
+      const id   = uri.split(':').pop();
+      if (type === 'playlist') openPlaylistTracks(id, name, uri);
+      else if (type === 'album') openAlbumTracks(id, name, uri);
+      else if (type === 'artist') openArtistTracks(id, name);
+      else playUri(uri, type);
     });
   });
 }
@@ -2695,6 +2700,78 @@ async function playUri(uri, type) {
   }
 }
 
+
+/* ================================================================
+   PLAYLIST / ALBUM / ARTIST DRILL-DOWN
+   ================================================================ */
+async function openPlaylistTracks(id, name, contextUri) {
+  showLoader();
+  try {
+    // Fetch all tracks (handle pagination)
+    let tracks = [];
+    let url = `/playlists/${id}/tracks?limit=100&fields=next,items(track(uri,name,duration_ms,artists,album(name,images)))`;
+    while (url) {
+      const res = await spotifyFetch(url);
+      tracks = tracks.concat((res.items || []).map(i => i.track).filter(Boolean));
+      url = res.next ? res.next.replace('https://api.spotify.com/v1', '') : null;
+    }
+    renderTrackListView(name, contextUri, tracks);
+  } catch(e) {
+    $('libraryContent').innerHTML = `<div class="empty-state"><p>Could not load playlist: ${escHtml(e.message)}</p></div>`;
+  }
+}
+
+async function openAlbumTracks(id, name, contextUri) {
+  showLoader();
+  try {
+    const res = await spotifyFetch(`/albums/${id}/tracks?limit=50`);
+    const tracks = (res.items || []).map(t => ({ ...t, album: { name, images: [] } }));
+    renderTrackListView(name, contextUri, tracks);
+  } catch(e) {
+    $('libraryContent').innerHTML = `<div class="empty-state"><p>Could not load album: ${escHtml(e.message)}</p></div>`;
+  }
+}
+
+async function openArtistTracks(id, name) {
+  showLoader();
+  try {
+    const res = await spotifyFetch(`/artists/${id}/top-tracks`);
+    const tracks = res.tracks || [];
+    renderTrackListView(name + ' — Top Tracks', null, tracks);
+  } catch(e) {
+    $('libraryContent').innerHTML = `<div class="empty-state"><p>Could not load artist tracks: ${escHtml(e.message)}</p></div>`;
+  }
+}
+
+function renderTrackListView(title, contextUri, tracks) {
+  let html = `
+    <div style="display:flex;align-items:center;gap:10px;margin-top:16px;margin-bottom:4px">
+      <button id="btnBackToLibrary" style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;gap:6px;padding:6px 12px;font-family:inherit;font-size:12px;transition:0.2s">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+        Back
+      </button>
+      ${contextUri ? `<button data-context="${contextUri}" id="btnPlayContext" style="background:var(--green);border:none;border-radius:8px;color:#000;cursor:pointer;display:flex;align-items:center;gap:6px;padding:6px 14px;font-family:inherit;font-size:12px;font-weight:600;transition:0.2s">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+        Play all
+      </button>` : ''}
+      <span class="section-title" style="margin:0">${escHtml(title)}</span>
+    </div>
+    <div class="track-list">`;
+  if (!tracks.length) {
+    html += `<div class="empty-state"><p>No tracks found.</p></div>`;
+  } else {
+    tracks.forEach(t => { html += buildTrackItem(t); });
+  }
+  html += `</div>`;
+  $('libraryContent').innerHTML = html;
+  // Back button
+  const backBtn = document.getElementById('btnBackToLibrary');
+  if (backBtn) backBtn.addEventListener('click', () => loadLibrary());
+  // Play all button
+  const playBtn = document.getElementById('btnPlayContext');
+  if (playBtn) playBtn.addEventListener('click', () => playUri(playBtn.dataset.context, 'playlist'));
+  bindLibraryEvents();
+}
 function escHtml(str) {
   if (!str) return '';
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
